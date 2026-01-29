@@ -1,0 +1,66 @@
+---
+- name: Deploy Thesis Infrastructure
+  hosts: all
+  become: yes
+  vars:
+    project_dest: "/opt/thesis-project"
+
+  tasks:
+    # 1. Update System
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    # 2. Install Dependencies
+    - name: Install required packages
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+
+    # 3. Install Docker (Official Script Method)
+    - name: Check if Docker is installed
+      command: docker --version
+      register: docker_check
+      ignore_errors: yes
+
+    - name: Install Docker
+      shell: curl -fsSL https://get.docker.com | sh
+      when: docker_check.failed
+
+    # 4. Copy Project Files
+    - name: Create project directory
+      file:
+        path: "{{ project_dest }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copy Docker files to server
+      synchronize:
+        src: ../docker/
+        dest: "{{ project_dest }}/"
+        recursive: yes
+        delete: no # Don't delete existing data like logs
+
+    # 5. Launch Services
+    - name: Start Docker Compose Stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ project_dest }}"
+        state: present
+        pull: always
+
+    - name: Ensure Unbound config dir exists
+      file:
+        path: "{{ project_dest }}/config/unbound"
+        state: directory
+        mode: '0755'
+
+    - name: Download root.hints for Unbound
+      get_url:
+        url: https://www.internic.net/domain/named.root
+        dest: "{{ project_dest }}/config/unbound/root.hints"
+        mode: '0644'
