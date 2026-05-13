@@ -1,5 +1,6 @@
 ---
 - name: Deploy Thesis Infrastructure
+  # SSH host key handling is configured in ansible/inventory.ini
   hosts: all
   become: yes
   vars:
