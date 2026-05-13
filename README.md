@@ -153,8 +153,11 @@ python3 soho_iac.py status
 	- verify Docker is installed and running inside LXC
 - Terraform fails to authenticate:
 	- verify token ID/secret and API URL format
+	- if you see x509 TLS errors, set `proxmox_tls_insecure = true` (lab/self-signed)
 - Ansible cannot connect:
 	- check generated `ansible/inventory.ini`
+	- ensure `ansible_ssh_private_key_file` points to a private key (no `.pub`)
+	- if you see “REMOTE HOST IDENTIFICATION HAS CHANGED”, clear the old key or use a dedicated `known_hosts_soho` file
 	- verify SSH user/key and host reachability
 
 ## Security Notes

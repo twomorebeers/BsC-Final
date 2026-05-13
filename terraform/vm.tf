@@ -64,6 +64,7 @@ variable "bridge" {
 }
 
 variable "lxc_ip" {
+	// Ensure this aligns with ansible inventory host IP
 	description = "CIDR IP for LXC, e.g. 192.168.1.50/24"
 	type        = string
 }
@@ -82,7 +83,7 @@ variable "lxc_root_password" {
 variable "ssh_public_key_path" {
 	description = "Path to SSH public key used for root login"
 	type        = string
-	default     = "~/.ssh/id_ed25519.pub"
+	default     = "/Users/bogdishor/.ssh/id_ed25519.pub"
 }
 
 resource "proxmox_lxc" "docker_host" {

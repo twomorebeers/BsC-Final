@@ -94,7 +94,10 @@ def _sync_ansible_inventory_from_tf():
     content = (
         "[soho]\n"
         f"soho-target ansible_host={ip} ansible_user={user} "
-        f"ansible_ssh_private_key_file={key}\n"
+        f"ansible_ssh_private_key_file={key} "
+        "ansible_ssh_common_args='-o StrictHostKeyChecking=accept-new "
+        "-o UserKnownHostsFile=~/.ssh/known_hosts_soho "
+        "-o GlobalKnownHostsFile=/dev/null'\n"
     )
     inventory_path.write_text(content)
     return ip
@@ -449,7 +452,137 @@ COMMANDS = {
     "-h":      cmd_help,
 }
 
+DEMO_START_TS = time.time()
+
+def _format_uptime(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {sec}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
+
+def cmd_showcase():
+    print_banner()
+    console.print(Panel(Text(BANNER, style="bold cyan"), border_style="cyan"))
+    console.print(Align.center(Text("Mock Deployment — Presentation Mode", style="bold green")))
+    console.print()
+
+    steps = [
+        ("Terraform", "Initializing providers", 0.6),
+        ("Terraform", "Provisioning LXC: soho-docker (vmid=210)", 1.0),
+        ("Terraform", "Network ready: 192.168.1.69/24 → vmbr0", 0.8),
+        ("Ansible", "Applying host hardening", 0.8),
+        ("Ansible", "Installing Docker Engine", 0.7),
+        ("Ansible", "Deploying Compose stack", 0.9),
+        ("Docker", "Pulling images", 0.8),
+        ("Docker", "Starting services", 0.9),
+        ("Verify", "Health checks: all green", 0.7),
+    ]
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.fields[layer]}[/bold]", style="dim"),
+        BarColumn(bar_width=24),
+        TextColumn("{task.description}"),
+        console=console,
+        transient=False,
+    ) as progress:
+        for layer, desc, dur in steps:
+            task = progress.add_task(desc, total=100, layer=layer)
+            for _ in range(40):
+                time.sleep(dur / 40)
+                progress.advance(task, 2.5)
+
+    console.print()
+    console.print(Panel(
+        "[bold green]✓  Infrastructure Ready[/bold green]\n\n"
+        "  LXC Host     →  192.168.1.69\n"
+        "  Compose Net  →  thesis_net\n"
+        "  DNS Stack    →  Pi-hole + Unbound\n"
+        "  VPN          →  WireGuard\n"
+        "  Proxy        →  Nginx Proxy Manager\n"
+        "  Automation   →  n8n\n"
+        "  Observability→  Prometheus + Grafana\n",
+        border_style="green",
+        padding=(1, 2),
+    ))
+
+    table = Table(
+        box=box.ROUNDED,
+        border_style="dim",
+        show_header=True,
+        header_style="bold cyan",
+        padding=(0, 1),
+    )
+    table.add_column("Service",   style="bold", min_width=18)
+    table.add_column("Container", style="dim",  min_width=22)
+    table.add_column("Status",    min_width=10)
+    table.add_column("Uptime",    style="dim",  min_width=12)
+    table.add_column("IP / Port", style="dim",  min_width=20)
+    table.add_column("Layer",     style="dim",  min_width=10)
+
+    uptime = _format_uptime(time.time() - DEMO_START_TS)
+    mock_services = [
+        ("Pi-hole",    "pihole",          "● running", uptime, "192.168.1.69:80",   "DNS"),
+        ("Unbound",    "unbound",         "● running", uptime, "172.20.0.3:5335",   "DNS"),
+        ("WireGuard",  "wireguard",       "● running", uptime, "0.0.0.0:51820/udp", "VPN"),
+        ("Nginx PM",   "nginx-proxy-mgr", "● running", uptime, "192.168.1.69:81",   "Proxy"),
+        ("n8n",        "n8n",             "● running", uptime, "192.168.1.69:5678", "Automation"),
+        ("Prometheus", "prometheus",      "● running", uptime, "192.168.1.69:9090", "Observability"),
+        ("Grafana",    "grafana",         "● running", uptime, "192.168.1.69:3000", "Observability"),
+    ]
+
+    for name, container, status, uptime, endpoint, layer in mock_services:
+        table.add_row(
+            name,
+            container,
+            Text(status, style="bold green"),
+            uptime,
+            endpoint,
+            layer,
+        )
+
+    console.print()
+    console.print(Rule("[bold cyan]Service Status[/bold cyan]"))
+    console.print(table)
+    console.print()
+
+    console.print(Rule("[bold magenta]Tooling Scheme[/bold magenta]"))
+    scheme = Text()
+    scheme.append(" Terraform ", style="bold yellow on black")
+    scheme.append(" ──► ", style="dim")
+    scheme.append(" Ansible ", style="bold magenta on black")
+    scheme.append(" ──► ", style="dim")
+    scheme.append(" Docker Compose ", style="bold cyan on black")
+    scheme.append(" ──► ", style="dim")
+    scheme.append(" Services ", style="bold green on black")
+    scheme.append("\n")
+    scheme.append("   ╭─ IaC Pipeline ───────────────────────────────────────╮\n", style="dim")
+    scheme.append("   │  ✅ provision  ✅ configure  ✅ deploy  ✅ verify     │\n", style="green")
+    scheme.append("   ╰──────────────────────────────────────────────────────╯\n", style="dim")
+    scheme.append("   DNS: ", style=None)
+    scheme.append("Pi-hole + Unbound", style="green")
+    scheme.append("   VPN: ", style=None)
+    scheme.append("WireGuard", style="green")
+    scheme.append("   Proxy: ", style=None)
+    scheme.append("Nginx PM", style="green")
+    scheme.append("\n")
+    scheme.append("   Automation: ", style=None)
+    scheme.append("n8n", style="green")
+    scheme.append("   Observability: ", style=None)
+    scheme.append("Prometheus + Grafana", style="green")
+    scheme.append("\n")
+    console.print(Panel(scheme, border_style="magenta", padding=(1, 2)))
+    console.print()
+
+
 if __name__ == "__main__":
+    if os.getenv("SOHO_DEMO", "1") == "1":
+        cmd_showcase()
+        sys.exit(0)
     cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
     fn  = COMMANDS.get(cmd)
     if fn:
