@@ -1,0 +1,84 @@
+networks:
+  thesis_demo_net:
+    driver: bridge
+
+services:
+  # 1. Unbound (Privacy Layer)
+  unbound:
+    image: mvance/unbound:latest
+    container_name: demo-unbound
+    restart: unless-stopped
+    platform: linux/amd64
+    networks:
+      - thesis_demo_net
+
+  # 2. Pi-hole (The Filter)
+  pihole:
+    image: pihole/pihole:latest
+    container_name: demo-pihole
+    restart: unless-stopped
+    environment:
+      # Pi-hole v6: use PIHOLE_DNS_ (comma-separated) or configure via volume
+      - PIHOLE_DNS_=unbound
+      - FTLCONF_webserver_api_password=admin
+    networks:
+      - thesis_demo_net
+    ports:
+    
+      - "5354:53/tcp"
+      - "5354:53/udp"
+      - "8080:80/tcp"
+    volumes:
+      - ./demo_data/pihole:/etc/pihole
+    depends_on:
+      - unbound
+
+  # 3. Nginx Proxy Manager
+  nginx:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: demo-nginx
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+      - "8181:81" 
+      - "8443:443"
+    networks:
+      - thesis_demo_net
+    volumes:
+      - ./demo_data/nginx/data:/data
+      - ./demo_data/nginx/letsencrypt:/etc/letsencrypt
+
+  # 4. n8n (Automation)
+  n8n:
+    image: n8nio/n8n
+    container_name: demo-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    networks:
+      - thesis_demo_net
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=thesis_demo
+    volumes:
+      - ./demo_data/n8n:/home/node/.n8n
+
+  # 5. WireGuard (The "Mock" Tunnel)
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: demo-wireguard
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - WIREGUARD_GO=true 
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "51820:51820/udp"
+    networks:
+      - thesis_demo_net
+    volumes:
+      - ./demo_data/wireguard:/config
+
+# Demo stack: ports are mapped for local testing

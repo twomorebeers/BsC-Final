@@ -23,6 +23,31 @@ terraform/.terraform.lock.hcl
 # Deprecated CLI orchestrator — kept locally, no longer part of the project
 soho_iac.py
 
+# Docker stack: runtime state & secrets (regenerated per VM, never commit).
+# Mirrors the ansible playbook's rsync exclusions. Keeps private keys, TLS
+# certs, databases and logs out of the repo; declarative config stays tracked.
+docker/config/wireguard/
+docker/config/n8n/
+docker/config/nginx/
+docker/config/unbound/unbound.pid
+docker/config/unbound/var/
+docker/config/unbound/root.hints
+docker/config/pihole/etc-pihole/pihole-FTL.db*
+docker/config/pihole/etc-pihole/gravity*.db
+docker/config/pihole/etc-pihole/gravity_backups/
+docker/config/pihole/etc-pihole/config_backups/
+docker/config/pihole/etc-pihole/migration_backup/
+docker/config/pihole/etc-pihole/listsCache/
+docker/config/pihole/etc-pihole/dhcp.leases
+docker/config/pihole/etc-pihole/logrotate
+docker/config/pihole/etc-pihole/versions
+docker/config/pihole/etc-pihole/dnsmasq.conf
+docker/config/pihole/etc-pihole/pihole.toml
+docker/config/pihole/etc-pihole/tls*
+# demo_data: bulky runtime state + a password file; keep only the n8n workflow.
+docker/demo_data/*
+!docker/demo_data/n8n_workflow_pihole_monitor.json
+
 # Python
 __pycache__/
 *.pyc

@@ -1,0 +1,166 @@
+networks:
+  thesis_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Named volumes for services that run as non-root users. Docker initializes
+# these with the image's correct ownership, avoiding the bind-mount permission
+# crashes (Grafana=472, Prometheus=nobody, n8n=node).
+volumes:
+  grafana_data:
+  prometheus_data:
+  n8n_data:
+
+services:
+  # 1. Unbound (The Recursive Resolver)
+  unbound:
+    image: mvance/unbound:latest
+    container_name: unbound
+    restart: unless-stopped
+    hostname: unbound
+    platform: linux/amd64
+    networks:
+      thesis_net:
+        ipv4_address: 172.20.0.2
+    volumes:
+      - ./config/unbound/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+      - ./config/unbound/root.hints:/opt/unbound/etc/unbound/root.hints:ro
+
+  # 2. Pi-hole (The Ad Blocker)
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    restart: unless-stopped
+    hostname: pihole
+    environment:
+      # Critical: Tell Pi-hole to use Unbound (172.20.0.2) on port 5335
+      - PIHOLE_DNS_=172.20.0.2#5335
+      # Pi-hole v6 web/API password (replaces the old v5 WEBPASSWORD)
+      - FTLCONF_webserver_api_password=admin
+      - TZ=Europe/Bucharest
+    networks:
+      thesis_net:
+        ipv4_address: 172.20.0.3
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "80:80/tcp" # Admin Interface (Can be proxied later if needed)
+    volumes:
+      - ./config/pihole/etc-pihole:/etc/pihole
+      - ./config/pihole/dnsmasq:/etc/dnsmasq.d
+    depends_on:
+      - unbound
+
+  # 3. Nginx Proxy Manager (The Reverse Proxy)
+  nginx:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "81:81"   # Admin UI
+      - "443:443" # HTTPS traffic
+    networks:
+      thesis_net:
+        ipv4_address: 172.20.0.4
+    volumes:
+      - ./config/nginx/data:/data
+      - ./config/nginx/letsencrypt:/etc/letsencrypt
+
+  # 4. n8n (The Automation Engine)
+  n8n:
+    image: n8nio/n8n
+    container_name: n8n
+    restart: unless-stopped
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=secure_thesis_pass
+      - WEBHOOK_URL=https://n8n.yourdomain.com # Optional, if you add a domain later
+    networks:
+      thesis_net:
+        ipv4_address: 172.20.0.5
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  # 5. WireGuard (The VPN)
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Bucharest
+      - SERVERURL=auto # Auto-detects IP
+      - SERVERPORT=51820
+      - PEERS=1 # Number of clients (phone/laptop) to generate configs for
+      - PEERDNS=172.20.0.3 # Clients will use Pi-hole for DNS!
+    networks:
+      thesis_net:
+        ipv4_address: 172.20.0.6
+    ports:
+      - "51820:51820/udp"
+    volumes:
+      - ./config/wireguard:/config
+      - /lib/modules:/lib/modules
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+
+  # 6. Pi-hole Exporter (turns Pi-hole stats into Prometheus metrics)
+  pihole-exporter:
+    image: ekofr/pihole-exporter:latest
+    container_name: pihole-exporter
+    restart: unless-stopped
+    environment:
+      - PIHOLE_HOSTNAME=172.20.0.3
+      - PIHOLE_PORT=80
+      - PIHOLE_PASSWORD=admin
+      - INTERVAL=30s
+    networks:
+      thesis_net:
+        ipv4_address: 172.20.0.7
+    depends_on:
+      - pihole
+
+  # 7. Prometheus (metrics store)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    networks:
+      thesis_net:
+        ipv4_address: 172.20.0.8
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - pihole-exporter
+
+  # 8. Grafana (the dashboards embedded by the Web UI)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      # Anonymous + embedding so the React Web UI can iframe panels without login.
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_SECURITY_COOKIE_SAMESITE=none
+      - GF_USERS_DEFAULT_THEME=light
+    ports:
+      - "3000:3000"
+    networks:
+      thesis_net:
+        ipv4_address: 172.20.0.9
+    volumes:
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
