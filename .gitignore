@@ -1,0 +1,38 @@
+# AI assistant artifacts (never commit)
+.claude/
+**/.claude/
+CLAUDE.md
+.cursor/
+.aider*
+.github/copilot-instructions.md
+
+# Secrets & Terraform state (never commit)
+terraform/credentials.tfvars
+terraform/*.tfvars
+!terraform/*.tfvars.example
+*.tfstate
+*.tfstate.*
+terraform/terraform.tfstate.d/
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+*.auto.tfvars
+.env
+.env.*
+!.env.example
+
+# Deprecated CLI orchestrator — kept locally, no longer part of the project
+soho_iac.py
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+webui/api/.venv/
+webui/api/.env.local
+
+# Node / frontend
+webui/frontend/node_modules/
+webui/frontend/dist/
+
+# OS
+.DS_Store

@@ -46,14 +46,20 @@
         dest: "{{ project_dest }}/"
         recursive: yes
         delete: no # Don't delete existing data like logs
+        rsync_opts:
+          # Do NOT ship environment-specific runtime state from the repo — let
+          # each VM generate it fresh. Critical for WireGuard: shipped peer/
+          # server keys would pin the OLD public IP and break the VPN. We keep
+          # declarative config (unbound.conf, prometheus, grafana, pihole
+          # blocklists) but drop generated state.
+          - "--exclude=config/wireguard"
+          - "--exclude=config/n8n"
+          - "--exclude=config/nginx/data"
+          - "--exclude=config/pihole/etc-pihole/pihole-FTL.db"
 
-    # 5. Launch Services
-    - name: Start Docker Compose Stack
-      community.docker.docker_compose_v2:
-        project_src: "{{ project_dest }}"
-        state: present
-        pull: always
-
+    # 5. Prepare Unbound root hints BEFORE starting the stack, so the bind
+    #    mount points at a real file (not an auto-created directory) and
+    #    Unbound can resolve recursively on first boot.
     - name: Ensure Unbound config dir exists
       file:
         path: "{{ project_dest }}/config/unbound"
@@ -65,3 +71,38 @@
         url: https://www.internic.net/domain/named.root
         dest: "{{ project_dest }}/config/unbound/root.hints"
         mode: '0644'
+
+    # 6. Free port 53 for Pi-hole. Ubuntu's systemd-resolved stub listener
+    #    occupies 53 by default, which collides with Pi-hole's 0.0.0.0:53 bind.
+    - name: Ensure resolved.conf.d exists
+      file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        mode: '0755'
+
+    - name: Disable systemd-resolved stub listener (frees port 53)
+      copy:
+        dest: /etc/systemd/resolved.conf.d/disable-stub.conf
+        content: |
+          [Resolve]
+          DNSStubListener=no
+        mode: '0644'
+
+    - name: Point resolv.conf at the non-stub systemd resolver (keeps host DNS working)
+      file:
+        src: /run/systemd/resolve/resolv.conf
+        dest: /etc/resolv.conf
+        state: link
+        force: yes
+
+    - name: Restart systemd-resolved
+      systemd:
+        name: systemd-resolved
+        state: restarted
+
+    # 7. Launch Services (port 53 free, root.hints present, stale state gone)
+    - name: Start Docker Compose Stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ project_dest }}"
+        state: present
+        pull: always
