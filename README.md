@@ -1,171 +1,107 @@
 # SOHO IaC Thesis Project
 
-Infrastructure-as-Code project for deploying and operating a SOHO security stack using:
+Infrastructure-as-Code project that delivers a SOHO security stack as a
+**self-service, on-demand service**. A user registers in a web UI, and a full
+isolated stack is provisioned for them on a cloud VM, configured, and handed
+back as a WireGuard connection plus a friendly dashboard.
 
-- Terraform (Proxmox LXC provisioning)
-- Ansible (host bootstrap + Docker deployment)
-- Docker Compose (services)
-- Python CLI (`soho_iac.py`) for orchestration and status
+Stack of tools:
 
-## Overview
+- **Terraform** — provisions a Hetzner Cloud VM (per tenant, on demand)
+- **Ansible** — bootstraps the host and deploys the containers
+- **Docker Compose** — runs the security/observability services
+- **Web UI** (`webui/`) — FastAPI control plane + React frontend (the SaaS layer)
 
-This repository implements an end-to-end IaC workflow for a home/small-office environment:
+## Why this design
 
-1. Provision an LXC on Proxmox with Terraform
-2. Configure the host and deploy containers with Ansible
-3. Run the security stack with Docker Compose:
-	 - Pi-hole (DNS filtering)
-	 - Unbound (recursive DNS)
-	 - WireGuard (VPN)
-	 - Nginx Proxy Manager (reverse proxy)
-	 - n8n (automation)
+The original stack assumed the user owned a server (Proxmox) and the skills to
+run it. The accessibility goal — *help non-technical home users* — is met by
+**not** running anything on the user's hardware. Instead:
 
-The Python CLI can run deployment steps and show service status using real `docker ps` output (local or remote via SSH/Proxmox).
+- The stack runs on a throwaway **Hetzner VM** provisioned per tenant.
+- The user only needs a **WireGuard client** (every OS has one) and a browser.
+- Hetzner bills hourly, so the control plane provisions on demand and destroys
+  on teardown — cost stays near zero.
 
-## Repository Layout
+The same Terraform + Ansible pipeline is what makes "provision a fresh, isolated
+stack in minutes" possible, and the measured provision/destroy time is the
+thesis's resilience (RTO) metric.
+
+## Services
+
+| Container | Layer | Notes |
+|---|---|---|
+| Pi-hole | DNS filtering | Network-wide ad/tracker blocking |
+| Unbound | Recursive DNS | Local resolution (privacy) |
+| WireGuard | VPN | How the user's device reaches the stack |
+| Nginx Proxy Manager | Reverse proxy | |
+| n8n | Automation | |
+| Pi-hole exporter → Prometheus → Grafana | Observability | Dashboards embedded in the Web UI |
+
+## Repository layout
 
 ```text
 .
-├── soho_iac.py
-├── terraform/
-│   ├── main.tf
-│   ├── vm.tf
-│   ├── cloud-init.yml
-│   └── credentials.tfvars
-├── ansible/
-│   ├── inventory.ini
+├── terraform/             # Hetzner provisioning (per-tenant workspaces)
+│   ├── main.tf            #   hcloud provider
+│   ├── hetzner.tf         #   server resource, variables, outputs
+│   └── cloud-init.yml
+├── ansible/               # host bootstrap + Docker deploy
+│   ├── inventory.ini      #   auto-generated from Terraform output
 │   └── playbook.yaml
-└── docker/
-		├── docker-compose.yml
-		├── docker-compose-demo.yml
-		└── config/
+├── docker/                # the service stack + observability config
+│   ├── docker-compose.yml
+│   └── config/
+└── webui/                 # SaaS control plane
+    ├── api/               #   FastAPI + provisioning logic
+    └── frontend/          #   React (Vite)
 ```
 
-## Prerequisites
+## Prerequisites (control-plane host)
 
-Install the following on your control machine:
+- Python 3.10+, Terraform 1.5+, Ansible (+ `community.docker` collection)
+- `ssh` on PATH and an SSH keypair (default `~/.ssh/id_ed25519[.pub]`)
+- A **Hetzner Cloud API token** (Read & Write)
+- Node.js (for the React frontend)
 
-- Python 3.10+
-- Terraform 1.5+
-- Ansible (and `community.docker` collection)
-- Docker CLI
-- SSH access to Proxmox and/or target LXC
+## The Hetzner token (never commit it)
 
-Optional but recommended:
-
-- `rich` Python package for nicer CLI output
-
-## Terraform Configuration (Proxmox)
-
-The Proxmox provider is configured in `terraform/main.tf`, and LXC resources/variables are in `terraform/vm.tf`.
-
-Edit `terraform/credentials.tfvars` with real values:
-
-- `proxmox_api_url`
-- `proxmox_api_token_id`
-- `proxmox_api_token_secret`
-- `proxmox_node`
-- `lxc_ip`, `gateway`
-- `lxc_root_password`
-- `ssh_public_key_path`
-
-> Important: never commit real secrets.
-
-## Ansible Configuration
-
-Main playbook: `ansible/playbook.yaml`.
-
-Inventory can be:
-
-- generated automatically by `soho_iac.py deploy` from Terraform output (`lxc_ipv4`), or
-- set manually in `ansible/inventory.ini`.
-
-## Docker Stack
-
-- Production-style compose: `docker/docker-compose.yml`
-- Demo compose (portable host ports): `docker/docker-compose-demo.yml`
-
-## Python CLI (`soho_iac.py`)
-
-Run:
+The token is read from the environment, forwarded to Terraform as
+`TF_VAR_hcloud_token`, and never written to a file:
 
 ```bash
-python3 soho_iac.py help
+export HCLOUD_TOKEN="hcloud_xxxxxxxxxxxxxxxxxxxx"
 ```
 
-Commands:
+`terraform/credentials.tfvars` holds only **non-secret** tunables
+(`tenant_id`, server type, location, SSH key path); it is gitignored. See
+`terraform/credentials.tfvars.example`.
 
-- `deploy` – runs Terraform + Ansible pipeline
-- `status` – prints service table (prefers real Docker status)
-- `destroy` – simulated destruction workflow
-- `restore` – simulated recovery workflow with RTO timer
+## Quick start — the Web UI (primary path)
 
-## Getting Real `docker ps` Data in `status`
-
-`soho_iac.py status` uses this priority:
-
-1. Direct SSH to Docker host (`SOHO_DOCKER_SSH`)
-2. SSH to Proxmox + `pct exec` into LXC (`SOHO_PROXMOX_SSH` + `SOHO_LXC_ID`)
-3. Local Docker daemon
-4. Fallback demo data
-
-Set environment variables (example):
+See `webui/README.md`. In short:
 
 ```bash
-export SOHO_DOCKER_SSH="root@192.168.100.50"
+# API
+cd webui/api && python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export HCLOUD_TOKEN="..."
+uvicorn main:app --reload --port 8000
 
-# OR (Proxmox hop)
-export SOHO_PROXMOX_SSH="root@192.168.100.10"
-export SOHO_LXC_ID="210"
-
-# Optional for generated Ansible inventory
-export SOHO_LXC_SSH_USER="root"
-export SOHO_LXC_SSH_KEY="~/.ssh/id_ed25519"
+# Frontend (separate shell)
+cd webui/frontend && npm install && npm run dev   # http://localhost:5173
 ```
 
-Then run:
+Register → "Deploy my network" → scan the WireGuard QR → watch your Grafana.
+"Tear down" destroys the VM.
 
-```bash
-python3 soho_iac.py status
-```
+## Security notes
 
-## Typical End-to-End Flow
-
-```bash
-# 1) Provision LXC in Proxmox
-cd terraform
-terraform init
-terraform apply -var-file=credentials.tfvars
-
-# 2) Return to project root and run orchestrator
-cd ..
-python3 soho_iac.py deploy
-
-# 3) Check service status
-python3 soho_iac.py status
-```
-
-## Troubleshooting
-
-- `status` shows demo data:
-	- verify SSH connectivity and key auth
-	- verify env vars are set in the same shell session
-	- verify Docker is installed and running inside LXC
-- Terraform fails to authenticate:
-	- verify token ID/secret and API URL format
-	- if you see x509 TLS errors, set `proxmox_tls_insecure = true` (lab/self-signed)
-- Ansible cannot connect:
-	- check generated `ansible/inventory.ini`
-	- ensure `ansible_ssh_private_key_file` points to a private key (no `.pub`)
-	- if you see “REMOTE HOST IDENTIFICATION HAS CHANGED”, clear the old key or use a dedicated `known_hosts_soho` file
-	- verify SSH user/key and host reachability
-
-## Security Notes
-
-- Replace all placeholder passwords immediately
-- Do not store secrets in Git
-- Consider moving sensitive values to a secrets manager or CI/CD secret store
+- Never commit the Hetzner token, `terraform/credentials.tfvars`, or
+  `*.tfstate` (state stores secrets in plaintext). These are gitignored.
+- Rotate any token that was ever committed — removing the file does not purge
+  git history.
 
 ## License
 
-Academic project (Bachelor thesis). Add your preferred open-source license if distributing publicly.
+Academic project (Bachelor thesis). Add a license before distributing publicly.

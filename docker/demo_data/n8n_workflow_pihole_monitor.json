@@ -1,0 +1,66 @@
+{
+  "name": "Pi-hole Monitor Demo",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "minutes", "minutesInterval": 1 }]
+        }
+      },
+      "name": "Every Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://pihole/admin/api.php?summary",
+        "options": {}
+      },
+      "name": "Get Pi-hole Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.ads_blocked_today }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "name": "Ads Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const stats = items[0].json;\nconst message = `🛡️ Pi-hole Stats:\\n- Queries Today: ${stats.dns_queries_today}\\n- Blocked: ${stats.ads_blocked_today}\\n- Block Rate: ${stats.ads_percentage_today}%`;\nconsole.log(message);\nreturn [{ json: { alert: message, ...stats } }];"
+      },
+      "name": "Format Alert",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 200]
+    }
+  ],
+  "connections": {
+    "Every Minute": {
+      "main": [[{ "node": "Get Pi-hole Stats", "type": "main", "index": 0 }]]
+    },
+    "Get Pi-hole Stats": {
+      "main": [[{ "node": "Ads Blocked?", "type": "main", "index": 0 }]]
+    },
+    "Ads Blocked?": {
+      "main": [
+        [{ "node": "Format Alert", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  }
+}

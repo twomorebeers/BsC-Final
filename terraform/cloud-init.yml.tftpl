@@ -1,0 +1,21 @@
+#cloud-config
+# Minimal bootstrap — just enough to make the VM reachable for Ansible,
+# which installs Docker and deploys the stack. The operator's public key is
+# injected here (templated by Terraform) so Ansible can SSH in as root.
+package_update: true
+package_upgrade: false
+packages:
+  - ca-certificates
+  - curl
+  - python3
+  - rsync
+ssh_authorized_keys:
+  - ${ssh_public_key}
+# Hetzner's image flags root's password as expired and forces a change on first
+# login. That blocks non-interactive SSH (our readiness check + Ansible), even
+# though key auth works. Disable password aging so key-based commands run.
+chpasswd:
+  expire: false
+runcmd:
+  - "chage -d $(date +%Y-%m-%d) -M -1 -I -1 -E -1 root"
+  - [ systemctl, enable, --now, ssh ]
